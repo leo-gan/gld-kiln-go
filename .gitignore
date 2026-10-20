@@ -13,6 +13,10 @@ temp/
 *.out
 vendor/
 
+# Python oracle cache
+__pycache__/
+*.pyc
+
 # MkDocs
 site/
 
