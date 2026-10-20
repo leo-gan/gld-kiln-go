@@ -1,0 +1,15 @@
+site_name: gld-kiln-go
+site_description: From-scratch Kiln codec for Go
+site_author: Leonid Ganeline
+site_url: https://leo-gan.github.io/gld-kiln-go/
+copyright: Copyright &copy; 2026 Leonid Ganeline. MIT.
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: teal
+
+nav:
+  - Home: index.md
