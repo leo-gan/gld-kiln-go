@@ -12,7 +12,7 @@ Copyright (c) 2026 Leonid Ganeline. MIT.
 ## Install
 
 ```bash
-go get github.com/leo-gan/gld-kiln-go@v0.1.0
+go get github.com/leo-gan/gld-kiln-go@v0.2.0
 ```
 
 ```go

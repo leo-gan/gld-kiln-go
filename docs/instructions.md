@@ -3,7 +3,7 @@
 Go 1.22 or newer. The module path is `github.com/leo-gan/gld-kiln-go`.
 
 ```bash
-go get github.com/leo-gan/gld-kiln-go@v0.1.0
+go get github.com/leo-gan/gld-kiln-go@v0.2.0
 ```
 
 ```go
