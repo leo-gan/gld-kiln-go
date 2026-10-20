@@ -1,0 +1,34 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Go release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+      - name: Install Go
+        run: bash scripts/ci-setup.sh
+      - name: Run tests
+        run: bash scripts/run-tests.sh
+      - name: Check generated
+        run: bash scripts/check-generated.sh
+      - name: Publish
+        env:
+          GO_REGISTRY_TOKEN: ${{ secrets.GO_REGISTRY_TOKEN }}
+        run: bash scripts/publish.sh
