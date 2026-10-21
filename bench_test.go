@@ -1,6 +1,7 @@
 package kiln
 
 import (
+	"math"
 	"testing"
 )
 
@@ -71,6 +72,60 @@ func BenchmarkTensor1024Encode(b *testing.B) {
 			b.Fatal(err)
 		}
 		sink = out
+	}
+}
+
+func BenchmarkMatrix1MEncode(b *testing.B) {
+	const n = 1 << 20
+	vals := make([]float32, n)
+	vals[0] = float32(math.Copysign(0, -1))
+	vals[1] = math.Float32frombits(0x7fc00000)
+	schema, err := Parse("struct{rows:i32,cols:i32,values:list<f32>}")
+	if err != nil {
+		b.Fatal(err)
+	}
+	value := map[string]any{"rows": int32(1024), "cols": int32(1024), "values": vals}
+	buf := make([]byte, 0, 12+n*4)
+	buf, err = Append(buf, schema, value)
+	if err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(n * 4))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		buf, err = Append(buf[:0], schema, value)
+		if err != nil {
+			b.Fatal(err)
+		}
+		sink = buf
+	}
+}
+
+func BenchmarkMatrix1MDecode(b *testing.B) {
+	const n = 1 << 20
+	vals := make([]float32, n)
+	schema, err := Parse("struct{rows:i32,cols:i32,values:list<f32>}")
+	if err != nil {
+		b.Fatal(err)
+	}
+	value := map[string]any{"rows": int32(1024), "cols": int32(1024), "values": vals}
+	buf, err := Append(nil, schema, value)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if _, err = Decode(schema, buf, Options{}); err != nil {
+		b.Fatal(err)
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(n * 4))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		v, err := Decode(schema, buf, Options{})
+		if err != nil {
+			b.Fatal(err)
+		}
+		sinkV = v
 	}
 }
 

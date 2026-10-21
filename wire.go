@@ -18,9 +18,8 @@ func appendF32s(dst []byte, x []float32) []byte {
 	if len(x) == 0 {
 		return dst
 	}
-	if hostLE {
-		raw := unsafe.Slice((*byte)(unsafe.Pointer(&x[0])), len(x)*4)
-		return append(dst, raw...)
+	if out, ok := appendLE(dst, x, 4); ok {
+		return out
 	}
 	for _, n := range x {
 		dst = putU32(dst, math.Float32bits(n))
@@ -32,42 +31,13 @@ func appendF64s(dst []byte, x []float64) []byte {
 	if len(x) == 0 {
 		return dst
 	}
-	if hostLE {
-		raw := unsafe.Slice((*byte)(unsafe.Pointer(&x[0])), len(x)*8)
-		return append(dst, raw...)
+	if out, ok := appendLE(dst, x, 8); ok {
+		return out
 	}
 	for _, n := range x {
 		dst = putU64(dst, math.Float64bits(n))
 	}
 	return dst
-}
-
-func readF32s(dst []float32, src []byte) {
-	if len(dst) == 0 {
-		return
-	}
-	if hostLE {
-		raw := unsafe.Slice((*byte)(unsafe.Pointer(&dst[0])), len(dst)*4)
-		copy(raw, src)
-		return
-	}
-	for i := range dst {
-		dst[i] = math.Float32frombits(binary.LittleEndian.Uint32(src[i*4:]))
-	}
-}
-
-func readF64s(dst []float64, src []byte) {
-	if len(dst) == 0 {
-		return
-	}
-	if hostLE {
-		raw := unsafe.Slice((*byte)(unsafe.Pointer(&dst[0])), len(dst)*8)
-		copy(raw, src)
-		return
-	}
-	for i := range dst {
-		dst[i] = math.Float64frombits(binary.LittleEndian.Uint64(src[i*8:]))
-	}
 }
 
 func PutBool(dst []byte, v bool) []byte {
@@ -126,7 +96,8 @@ func grow(dst []byte, n int) []byte {
 	if next < 64 {
 		next = 64
 	}
-	out := make([]byte, len(dst)+n, next)
+	// The new tail is uninitialized. Callers write those bytes before returning.
+	out := allocBytes(next)[:len(dst)+n]
 	copy(out, dst)
 	return out
 }

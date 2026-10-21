@@ -28,7 +28,12 @@ mismatch is `SCHEMA` and stops before the first field.
 
 `Encode`, `Decode`, and `DecodeOne` walk a `Schema`. Small scalar structs
 decode to `*Record` so the numeric fields are not boxed. Other structs decode
-to `map[string]any`. `EncodeTensors` writes a canonical directory.
+to `map[string]any`. Numeric lists decode to typed slices (`[]float32`,
+`[]int32`, and the other plain numbers) and are copied once on a
+little-endian host. `Options.Pool` and `Options.Scratch` reuse that storage.
+A slice from a pool is stable only until the next decode on that pool that
+materializes another pooled list. `EncodeTensors` writes a canonical
+directory and does not zero payload bytes it overwrites.
 `SchemaFromJSON` reads the JSON Schema subset used by dynamic values. It does
 not invent a `tensors` field from that subset.
 

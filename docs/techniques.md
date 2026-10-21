@@ -14,9 +14,24 @@ other put helpers grow that buffer only when the spare capacity is too small.
 
 ## Bulk numeric payloads
 
-On a little-endian host, a `list<f32>` or `list<f64>` is copied with one
-`copy` of the wire bytes. A tensor payload is already those bytes. The encoder
-copies the slice once into the directory. It does not visit each element.
+On a little-endian host, a numeric list is one copy of the wire bytes.
+`list<f32>` is a `[]float32`, `list<i32>` is a `[]int32`, and the other plain
+numbers use their own slices. A `u32` is four bytes. It is not written into a
+`uint` or `uint64` slot. Negative zero (`0x80000000`) and a quiet NaN
+(`0x7fc00000`) keep their bits. `AppendF32s` and `TakeF32s` are that copy.
+Generated list fields call them. A tensor payload is copied once into the
+directory. The encoder does not zero those payload bytes before the copy.
+
+## Pooled lists
+
+`Decode` with a nil `Options.Pool` uses the package list pool. Set `Pool` to
+a `ListPool` to keep that storage private. `Options.Scratch` supplies
+caller slices for the first list of each kind when the capacity is large
+enough. Scratch slices are not pooled.
+
+A slice drawn from a pool aliases storage that the pool reuses. It is stable
+only until the next decode on that pool that materializes another pooled
+list. Do not retain it past that decode.
 
 ## Allocation
 

@@ -183,18 +183,17 @@ func AppendTensors(dst []byte, ts []Tensor) ([]byte, error) {
 	payloadBase := (headerSize + dirBytes + 63) &^ 63
 	total := payloadBase + end
 	baseOut := len(dst)
-	fresh := false
 	if cap(dst)-len(dst) < total {
-		next := make([]byte, baseOut+total)
-		copy(next, dst)
-		dst = next
-		fresh = true
+		next := allocBytes(baseOut + total)
+		copy(next, dst[:baseOut])
+		dst = next[:baseOut+total]
 	} else {
 		dst = dst[:baseOut+total]
 	}
 	buf := dst[baseOut:]
-	if !fresh {
-		clear(buf)
+	// Zero the directory and alignment gap only. Payload bytes are copied.
+	if payloadBase > 0 {
+		clear(buf[:payloadBase])
 	}
 	copy(buf[:4], "KLNT")
 	buf[4] = 2
@@ -247,7 +246,17 @@ func AppendTensors(dst []byte, ts []Tensor) ([]byte, error) {
 		if p.layoutLen > 0 {
 			copy(buf[heapAt+int(p.layoutOff):], t.Layout)
 		}
-		copy(buf[payloadBase+p.off:], t.Data)
+	}
+	filled := payloadBase
+	for i, p := range plans {
+		off := payloadBase + p.off
+		if off > filled {
+			clear(buf[filled:off])
+		}
+		if n := len(ts[i].Data); n > 0 {
+			copy(buf[off:off+n], ts[i].Data)
+		}
+		filled = off + len(ts[i].Data)
 	}
 	return dst, nil
 }

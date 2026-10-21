@@ -385,6 +385,9 @@ func sizeStmt(expr string, t *typ, optional bool, tabs int) string {
 	case "ref", "struct":
 		return pad + "n += " + expr + ".EncodedSize()\n"
 	case "list":
+		if _, _, w := bulkOps(t.elem); w > 0 {
+			return fmt.Sprintf("%sn += 4 + %d*len(%s)\n", pad, w, expr)
+		}
 		return pad + "n += 4\n" + pad + "for _, item := range " + expr + " {\n" + sizeStmt("item", t.elem, false, tabs+1) + pad + "}\n"
 	default:
 		return pad + "n += 0\n"
@@ -433,6 +436,11 @@ func encodeStmt(expr string, t *typ, optional bool) string {
 	case "ref", "struct":
 		return "\tdst, err = " + expr + ".appendEnc(dst)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n"
 	case "list":
+		if app, _, _ := bulkOps(t.elem); app != "" {
+			return "\tif len(" + expr + ") > 0xFFFFFFFF {\n\t\treturn nil, kiln.Fail(\"LIMIT\")\n\t}\n" +
+				"\tdst = kiln.PutU32(dst, uint32(len(" + expr + ")))\n" +
+				"\tdst = kiln." + app + "(dst, " + expr + ")\n"
+		}
 		return "\tif len(" + expr + ") > 0xFFFFFFFF {\n\t\treturn nil, kiln.Fail(\"LIMIT\")\n\t}\n" +
 			"\tdst = kiln.PutU32(dst, uint32(len(" + expr + ")))\n" +
 			"\tfor _, item := range " + expr + " {\n" + indent(encodeStmt("item", t.elem, false)) + "\t}\n"
@@ -495,10 +503,44 @@ func decodeOpt(lhs string, t *typ) string {
 	}
 }
 
+func bulkOps(elem *typ) (appendFn, takeFn string, width int) {
+	if elem == nil {
+		return "", "", 0
+	}
+	switch elem.kind {
+	case "i8":
+		return "AppendI8s", "TakeI8s", 1
+	case "u8":
+		return "AppendU8s", "TakeU8s", 1
+	case "i16":
+		return "AppendI16s", "TakeI16s", 2
+	case "u16":
+		return "AppendU16s", "TakeU16s", 2
+	case "i32":
+		return "AppendI32s", "TakeI32s", 4
+	case "u32":
+		return "AppendU32s", "TakeU32s", 4
+	case "i64", "int":
+		return "AppendI64s", "TakeI64s", 8
+	case "u64", "uint":
+		return "AppendU64s", "TakeU64s", 8
+	case "f32":
+		return "AppendF32s", "TakeF32s", 4
+	case "f64":
+		return "AppendF64s", "TakeF64s", 8
+	default:
+		return "", "", 0
+	}
+}
+
 func decodeList(lhs string, elem *typ) string {
-	goElem := goType(elem, false)
 	body := "\tif len(buf) < 4 {\n\t\treturn v, buf, kiln.Fail(\"EOF\")\n\t}\n"
 	body += "\tvar n uint32\n\tn, buf, err = kiln.TakeU32(buf)\n\tif err != nil {\n\t\treturn v, buf, err\n\t}\n"
+	if _, take, _ := bulkOps(elem); take != "" {
+		body += "\t" + lhs + ", buf, err = kiln." + take + "(buf, n)\n\tif err != nil {\n\t\treturn v, buf, err\n\t}\n"
+		return body
+	}
+	goElem := goType(elem, false)
 	body += fmt.Sprintf("\tif err = kiln.CheckCount(len(buf), n, %d, 0); err != nil {\n\t\treturn v, buf, err\n\t}\n", minWire(elem))
 	body += "\t" + lhs + " = make([]" + goElem + ", n)\n"
 	body += "\tfor i := range " + lhs + " {\n"
