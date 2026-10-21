@@ -170,9 +170,17 @@ func unwrap(s, pre, suf string) (string, bool) {
 }
 
 // Options tunes a decode. Cap 0 selects DefaultCap. Trusted skips UTF-8 and quant-shape checks.
+//
+// Numeric lists decode to typed slices. Scratch, when set, is used for the
+// first list of each kind whose capacity is large enough; those slices are
+// not pooled. Pool reuses list storage across decodes. A nil Pool selects
+// the package pool. A slice drawn from a pool is stable only until the next
+// decode on that pool that materializes another pooled list.
 type Options struct {
 	Cap     int
 	Trusted bool
+	Scratch *ListScratch
+	Pool    *ListPool
 }
 
 func (o Options) cap() int {
@@ -446,46 +454,107 @@ func appendCounted(dst, raw []byte) ([]byte, error) {
 }
 
 func appendList(dst []byte, elem *Schema, v any) ([]byte, error) {
-	if elem.Kind == KindU8 {
+	if xs, ok := v.([]any); ok {
+		return appendAnyList(dst, elem, xs)
+	}
+	switch elem.Kind {
+	case KindU8:
 		b, ok := asBytes(v)
 		if !ok {
 			return nil, fmt.Errorf("kiln: want list<u8>")
 		}
 		return appendCounted(dst, b)
-	}
-	if elem.Kind == KindI8 {
-		b, ok := asI8Bytes(v)
+	case KindI8:
+		if b, ok := v.([]byte); ok {
+			return appendCounted(dst, b)
+		}
+		x, ok := v.([]int8)
 		if !ok {
 			return nil, fmt.Errorf("kiln: want list<i8>")
 		}
-		return appendCounted(dst, b)
-	}
-	switch x := v.(type) {
-	case []float32:
-		if elem.Kind != KindF32 {
-			return nil, fmt.Errorf("kiln: list element")
+		return appendCount(dst, x, appendI8s)
+	case KindI16:
+		x, ok := v.([]int16)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<i16>")
+		}
+		return appendCount(dst, x, appendI16s)
+	case KindU16:
+		x, ok := v.([]uint16)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<u16>")
+		}
+		return appendCount(dst, x, appendU16s)
+	case KindI32:
+		x, ok := v.([]int32)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<i32>")
+		}
+		return appendCount(dst, x, appendI32s)
+	case KindU32:
+		x, ok := v.([]uint32)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<u32>")
+		}
+		return appendCount(dst, x, appendU32s)
+	case KindI64:
+		x, ok := v.([]int64)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<i64>")
+		}
+		return appendCount(dst, x, appendI64s)
+	case KindInt:
+		x, ok := v.([]int)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<int>")
+		}
+		return appendCount(dst, x, appendInts)
+	case KindU64:
+		x, ok := v.([]uint64)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<u64>")
+		}
+		return appendCount(dst, x, appendU64s)
+	case KindUint:
+		x, ok := v.([]uint)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<uint>")
+		}
+		return appendCount(dst, x, appendUints)
+	case KindF32:
+		x, ok := v.([]float32)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<f32>")
+		}
+		if uint64(len(x)) > math.MaxUint32 {
+			return nil, Fail("LIMIT")
 		}
 		dst = putU32(dst, uint32(len(x)))
 		return appendF32s(dst, x), nil
-	case []float64:
-		if elem.Kind != KindF64 {
-			return nil, fmt.Errorf("kiln: list element")
+	case KindF64:
+		x, ok := v.([]float64)
+		if !ok {
+			return nil, fmt.Errorf("kiln: want list<f64>")
 		}
-		dst = putU32(dst, uint32(len(x)))
-		return appendF64s(dst, x), nil
-	case []any:
-		dst = binary.LittleEndian.AppendUint32(dst, uint32(len(x)))
-		var err error
-		for _, item := range x {
-			dst, err = Append(dst, elem, item)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return dst, nil
+		return appendCount(dst, x, appendF64s)
 	default:
 		return nil, fmt.Errorf("kiln: want list")
 	}
+}
+
+func appendAnyList(dst []byte, elem *Schema, x []any) ([]byte, error) {
+	if uint64(len(x)) > math.MaxUint32 {
+		return nil, Fail("LIMIT")
+	}
+	dst = putU32(dst, uint32(len(x)))
+	var err error
+	for _, item := range x {
+		dst, err = Append(dst, elem, item)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return dst, nil
 }
 
 func appendDict(dst []byte, elem *Schema, v any) ([]byte, error) {
@@ -531,21 +600,6 @@ func asBytes(v any) ([]byte, bool) {
 		return x, true
 	case string:
 		return []byte(x), true
-	default:
-		return nil, false
-	}
-}
-
-func asI8Bytes(v any) ([]byte, bool) {
-	switch x := v.(type) {
-	case []byte:
-		return x, true
-	case []int8:
-		b := make([]byte, len(x))
-		for i, n := range x {
-			b[i] = byte(n)
-		}
-		return b, true
 	default:
 		return nil, false
 	}
@@ -627,6 +681,14 @@ type cursor struct {
 	capn    int
 	trusted bool
 	depth   int
+
+	pool      *ListPool
+	scratch   *ListScratch
+	used      uint32
+	recycled  bool
+	mine      [4][]byte
+	nmine     int
+	mineExtra [][]byte
 }
 
 func Decode(s *Schema, buf []byte, opt Options) (any, error) {
@@ -641,8 +703,11 @@ func Decode(s *Schema, buf []byte, opt Options) (any, error) {
 }
 
 // DecodeOne reads one value and returns the unread suffix.
+// Numeric lists may alias Options.Pool, or the package pool when Pool is nil.
+// Those slices are stable only until the next pooled-list decode on that pool.
 func DecodeOne(s *Schema, buf []byte, opt Options) (any, []byte, error) {
-	d := &cursor{b: buf, capn: opt.cap(), trusted: opt.Trusted}
+	d := cursor{b: buf, capn: opt.cap(), trusted: opt.Trusted, pool: opt.Pool, scratch: opt.Scratch}
+	defer d.finish()
 	v, err := d.val(s)
 	if err != nil {
 		return nil, nil, err
@@ -852,31 +917,31 @@ func (d *cursor) list(elem *Schema) (any, error) {
 	if err := CheckCount(len(d.b)-d.i, n, each, d.capn); err != nil {
 		return nil, err
 	}
-	if elem.Kind == KindU8 || elem.Kind == KindI8 {
-		raw := d.b[d.i : d.i+int(n)]
-		d.i += int(n)
-		if elem.Kind == KindU8 {
-			out := make([]byte, len(raw))
-			copy(out, raw)
-			return out, nil
-		}
-		out := make([]int8, len(raw))
-		for i, b := range raw {
-			out[i] = int8(b)
-		}
-		return out, nil
-	}
-	if elem.Kind == KindF32 {
-		out := make([]float32, n)
-		readF32s(out, d.b[d.i:])
-		d.i += int(n) * 4
-		return out, nil
-	}
-	if elem.Kind == KindF64 {
-		out := make([]float64, n)
-		readF64s(out, d.b[d.i:])
-		d.i += int(n) * 8
-		return out, nil
+	switch elem.Kind {
+	case KindU8:
+		return d.u8List(int(n))
+	case KindI8:
+		return d.i8List(int(n))
+	case KindI16:
+		return d.i16List(int(n))
+	case KindU16:
+		return d.u16List(int(n))
+	case KindI32:
+		return d.i32List(int(n))
+	case KindU32:
+		return d.u32List(int(n))
+	case KindI64:
+		return d.i64List(int(n))
+	case KindInt:
+		return d.intList(int(n))
+	case KindU64:
+		return d.u64List(int(n))
+	case KindUint:
+		return d.uintList(int(n))
+	case KindF32:
+		return d.f32List(int(n))
+	case KindF64:
+		return d.f64List(int(n))
 	}
 	out := make([]any, n)
 	for i := range out {

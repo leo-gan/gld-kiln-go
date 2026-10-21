@@ -35,4 +35,7 @@ bash scripts/check-generated.sh
 `Decode` rejects trailing bytes. `DecodeOne` returns the unread suffix so a
 batch of values can share one buffer. `Options.Cap` raises the default count
 and string cap of 16777216. `Options.Trusted` skips UTF-8 and quant-shape
-checks. Lengths that pass the buffer are still rejected.
+checks. Lengths that pass the buffer are still rejected. `Options.Scratch`
+reuses caller slices for numeric lists. `Options.Pool` reuses storage across
+decodes; a nil pool is the package pool. A pooled slice is stable only until
+the next decode on that pool that materializes another pooled list.
