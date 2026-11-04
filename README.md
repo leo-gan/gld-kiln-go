@@ -1,5 +1,7 @@
 # gld-kiln-go
 
+[Serialization](https://leo-gan.github.io/serialization/) is the hub for the theory, the history, and the benchmarks.
+
 A from-scratch Kiln wire v2 library for Go. The runtime and the code generator
 are Go. They do not wrap, link, or vendor another language's Kiln library.
 Python `testdata/reference/kiln_ref.py` is a test oracle only.
